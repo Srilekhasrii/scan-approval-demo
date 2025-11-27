@@ -1,9 +1,10 @@
-name: Remediation and Deployment
+name: Automated Vulnerability Scan & Remediation
 
 on:
   workflow_dispatch:
     inputs:
       remediate:
+        description: "Select: approve or skip"
         required: true
         type: choice
         options:
@@ -11,28 +12,92 @@ on:
           - skip
 
 jobs:
-  execute:
+  scan_and_remediate:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
+      # Step 1 — Checkout your repository
+      - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Decision
-        run: echo "User selected:${{ github.event.inputs.remediate }}"
+      # Step 2 — Set up AWS credentials for scanning
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ap-south-1
 
-      - name: Run Remediation
-        if: ${{ github.event.inputs.remediate == 'approve' }}
+      # Step 3 — Validate user input (APPROVE / SKIP)
+      - name: Validate user decision
         run: |
-          echo "Running Remediation..."
-          echo "Fixing vulnerabilities..."
+          echo "User selected: ${{ github.event.inputs.remediate }}"
+          if [ "${{ github.event.inputs.remediate }}" = "approve" ]; then
+            echo "remediate=approve" >> $GITHUB_ENV
+          else
+            echo "remediate=skip" >> $GITHUB_ENV
+          fi
 
-      - name: Skip Remediation
-        if: ${{ github.event.inputs.remediate == 'skip' }}
-        run: echo "Skipping remediation..."
-
-      - name: Continue with Deployment
+      # Step 4 — Run vulnerability scan
+      - name: Run Trivy Scan
         run: |
-          echo "Continuing deployment steps..."
-          echo "You can add ECR push, ECS deploy, Terraform apply, etc."
+          echo "Running Trivy Scan..."
+          trivy image nginx:latest > scan-report.txt
+          echo "Scan completed."
 
+      # Step 5 — Upload report to repo
+      - name: Upload Scan Report
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-report
+          path: scan-report.txt
+
+      # Step 6 — Run remediation ONLY if APPROVE
+      - name: Run Remediation Script
+        if: env.remediate == 'approve'
+        run: |
+          echo "Running remediation..."
+          bash remediation.sh
+
+      # Step 7 — Trigger Terraform Apply ONLY if APPROVE
+      - name: Trigger Terraform Apply
+        if: env.remediate == 'approve'
+        run: |
+          echo "Triggering Terraform apply..."
+          terraform init
+          terraform apply -auto-approve
+
+      # Step 8 — Build safe Docker image ONLY if APPROVE
+      - name: Build Safe Image
+        if: env.remediate == 'approve'
+        run: docker build -t safe-nginx .
+
+      # Step 9 — Push image to ECR ONLY if APPROVE
+      - name: Login to ECR
+        if: env.remediate == 'approve'
+        run: aws ecr get-login-password --region ap-south-1 | docker login --username AWS --password-stdin "${{ secrets.ECR_URL }}"
+
+      - name: Push Safe Image
+        if: env.remediate == 'approve'
+        run: |
+          docker tag safe-nginx:latest ${{ secrets.ECR_URL }}/safe-nginx:latest
+          docker push ${{ secrets.ECR_URL }}/safe-nginx:latest
+
+      # Step 10 — Redeploy ECS ONLY if APPROVE
+      - name: Update ECS Service
+        if: env.remediate == 'approve'
+        run: |
+          echo "Updating ECS service..."
+          aws ecs update-service \
+            --cluster my-cluster \
+            --service my-service \
+            --force-new-deployment
+
+      # Step 11 — Final message
+      - name: Workflow Completed
+        run: |
+          if [ "${{ env.remediate }}" = "approve" ]; then
+            echo "APPROVED: Full remediation and deployment completed."
+          else
+            echo "SKIPPED: Remediation skipped. Scan and non-remediation steps completed."
+          fi
