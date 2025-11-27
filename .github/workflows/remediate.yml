@@ -1,0 +1,38 @@
+name: Remediation and Deployment
+
+on:
+  workflow_dispatch:
+    inputs:
+      remediate:
+        required: true
+        type: choice
+        options:
+          - approve
+          - skip
+
+jobs:
+  execute:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Decision
+        run: echo "User selected:${{ github.event.inputs.remediate }}"
+
+      - name: Run Remediation
+        if: ${{ github.event.inputs.remediate == 'approve' }}
+        run: |
+          echo "Running Remediation..."
+          echo "Fixing vulnerabilities..."
+
+      - name: Skip Remediation
+        if: ${{ github.event.inputs.remediate == 'skip' }}
+        run: echo "Skipping remediation..."
+
+      - name: Continue with Deployment
+        run: |
+          echo "Continuing deployment steps..."
+          echo "You can add ECR push, ECS deploy, Terraform apply, etc."
+
