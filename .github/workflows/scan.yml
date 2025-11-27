@@ -1,0 +1,61 @@
+name: Automated Vulnerability Scan
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["main"]
+  schedule:
+    - cron: "*/20 * * * *"
+
+permissions:
+  contents: write
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Trivy
+        run: |
+          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh
+          sudo mv ./bin/trivy /usr/local/bin/
+
+      - name: Run Vulnerability Scan
+        run: |
+          mkdir -p scan-reports
+          trivy image --exit-code 0 --severity CRITICAL,HIGH \
+            -o scan-reports/report.txt nginx:latest
+
+      - name: Upload scan report
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-scan-report
+          path: scan-reports/
+
+      - name: Generate Approve/Skip Links
+        run: |
+          APPROVE_URL="https://github.com/${GITHUB_REPOSITORY}/actions/workflows/remediate.yml?workflow_dispatch&remediate=approve"
+          SKIP_URL="https://github.com/${GITHUB_REPOSITORY}/actions/workflows/remediate.yml?workflow_dispatch&remediate=skip"
+
+          echo "APPROVE_URL=$APPROVE_URL" >> $GITHUB_ENV
+          echo "SKIP_URL=$SKIP_URL" >> $GITHUB_ENV
+
+      - name: Send Email for Approval
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          secure: true
+          username: ${{ secrets.APP_EMAIL }}
+          password: ${{ secrets.APP_PASS }}
+          from: ${{ secrets.APP_EMAIL }}
+          to: ${{ secrets.APP_EMAIL }}
+          subject: "Scan Completed — APPROVAL NEEDED"
+          html_body: |
+            <p>🛡 Scan completed for nginx:latest.</p>
+            <p>Please choose an action:</p>
+            <p><a href="${{ env.APPROVE_URL }}">✅ Approve (Run Remediation)</a></p>
+            <p><a href="${{ env.SKIP_URL }}">❌ Skip (Continue Without Remediation)</a></p>
