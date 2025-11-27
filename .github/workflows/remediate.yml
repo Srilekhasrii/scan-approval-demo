@@ -38,12 +38,20 @@ jobs:
             echo "remediate=skip" >> $GITHUB_ENV
           fi
 
-      # Step 4 — Run vulnerability scan
+      # Step 4 — Install Trivy
+      - name: Install Trivy
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install wget -y
+          wget https://github.com/aquasecurity/trivy/releases/latest/download/trivy_0.50.0_Linux-64bit.deb
+          sudo dpkg -i trivy_0.50.0_Linux-64bit.deb
+
+      # Step 4.5 — Run Scan
       - name: Run Trivy Scan
         run: |
           echo "Running Trivy Scan..."
-          trivy image nginx:latest > scan-report.txt
-          echo "Scan completed."
+          trivy image ${{ env.IMAGE_NAME }} | tee scan-reports/${{ env.IMAGE_BASENAME }}.txt
+
 
       # Step 5 — Upload report to repo
       - name: Upload Scan Report
